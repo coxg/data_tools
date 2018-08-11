@@ -1,9 +1,10 @@
 import unittest
 from .configurable import configurable
+from .safe_eval import safe_eval
 import sys
 
 
-class ConfigurableTests(unittest.TestCase):
+class ConfigurableVariableTests(unittest.TestCase):
 
     def test_int(self):
 
@@ -284,6 +285,192 @@ class ConfigurableTests(unittest.TestCase):
         sys.argv = ["python_script.py"]
         test_output = configurable(return_type=list, test_output=1, not_given=2)
         self.assertEqual(test_output, [1, 2])
+
+
+class ConfigurableFunctionTests(unittest.TestCase):
+
+    def test_no_variables(self):
+
+        # Define function
+        @configurable
+        def test_func():
+            return 10
+
+        # Make sure nothing changed
+        sys.argv = ["python_script.py"]
+        self.assertEqual(test_func(), 10)
+
+    def test_no_inputs(self):
+
+        # Define function
+        @configurable
+        def test_func(x, y=10):
+            return x, y
+
+        # Make sure nothing changed
+        sys.argv = ["python_script.py"]
+        self.assertEqual(test_func(1), (1, 10))
+        self.assertEqual(test_func(x=1), (1, 10))
+        self.assertEqual(test_func(1, 2), (1, 2))
+        self.assertEqual(test_func(x=1, y=2), (1, 2))
+
+        # Make sure arbitrary positional args still work
+        @configurable
+        def test_func(*args, x, y=10):
+            return args, x, y
+
+        # Make sure nothing changed
+        self.assertEqual(test_func(x=1), ((), 1, 10))
+        self.assertEqual(test_func(1, x=1), ((1,), 1, 10))
+        self.assertEqual(test_func(1, 2, 3, x=1), ((1, 2, 3), 1, 10))
+        self.assertEqual(test_func(x=1, y=2), ((), 1, 2))
+        self.assertEqual(test_func(1, x=1, y=2), ((1,), 1, 2))
+        self.assertEqual(test_func(1, 2, 3, x=1, y=2), ((1, 2, 3), 1, 2))
+
+    def test_with_inputs_positional(self):
+
+        # Define function
+        @configurable
+        def test_func(x, y=10):
+            return x, y
+
+        # Make sure the variable changed
+        sys.argv = ["python_script.py", "--x", "12"]
+        self.assertEqual(test_func(1), (12, 10))
+        self.assertEqual(test_func(x=1), (12, 10))
+        self.assertEqual(test_func(1, 2), (12, 2))
+        self.assertEqual(test_func(x=1, y=2), (12, 2))
+        self.assertEqual(test_func(y=2), (12, 2))
+
+        # Define function
+        @configurable
+        def test_func(*args, x, y=10):
+            return args, x, y
+
+    def test_with_inputs_keyword(self):
+
+        # Define function
+        @configurable
+        def test_func(x, y=10):
+            return x, y
+
+        # Make sure the variable changed
+        sys.argv = ["python_script.py", "--y", "12"]
+        self.assertEqual(test_func(1), (1, 12))
+        self.assertEqual(test_func(x=1), (1, 12))
+        self.assertEqual(test_func(1, 2), (1, 12))
+        self.assertEqual(test_func(x=1, y=2), (1, 12))
+
+    def test_with_inputs_mixed(self):
+
+        # Define function
+        @configurable
+        def test_func(x, y=10):
+            return x, y
+
+        # Make sure the variable changed
+        sys.argv = ["python_script.py", "--x", "7", "--y", "12"]
+        self.assertEqual(test_func(1), (7, 12))
+        self.assertEqual(test_func(x=1), (7, 12))
+        self.assertEqual(test_func(1, 2), (7, 12))
+        self.assertEqual(test_func(x=1, y=2), (7, 12))
+        self.assertEqual(test_func(y=2), (7, 12))
+        self.assertEqual(test_func(), (7, 12))
+
+
+class SafeEvalTests(unittest.TestCase):
+
+    def test_int(self):
+
+        # Test literal
+        test_value = safe_eval("1")
+        self.assertEqual(test_value, 1)
+
+        # Test function
+        test_value = safe_eval("int()")
+        self.assertEqual(test_value, 0)
+
+    def test_float(self):
+
+        # Test literal
+        test_value = safe_eval("1.0")
+        self.assertEqual(test_value, 1.0)
+
+        # Test function
+        test_value = safe_eval("float()")
+        self.assertEqual(test_value, 0.0)
+
+    def test_str(self):
+
+        # Test literal
+        test_value = safe_eval("'Heck'")
+        self.assertEqual(test_value, "Heck")
+
+        # Test strings without quotes
+        test_value = safe_eval("Heck")
+        self.assertEqual(test_value, "Heck")
+
+        # Test function
+        test_value = safe_eval("str()")
+        self.assertEqual(test_value, "")
+
+    def test_none(self):
+
+        # Test literal
+        test_value = safe_eval("None")
+        self.assertEqual(test_value, None)
+
+    def test_bool(self):
+
+        # Test literal
+        test_value = safe_eval("True")
+        self.assertEqual(test_value, True)
+        test_value = safe_eval("False")
+        self.assertEqual(test_value, False)
+
+        # Test function
+        test_value = safe_eval("bool()")
+        self.assertEqual(test_value, False)
+
+    def test_tuple(self):
+
+        # Test literal
+        test_value = safe_eval("(1, 2, 3)")
+        self.assertEqual(test_value, (1, 2, 3))
+
+        # Test function
+        test_value = safe_eval("tuple()")
+        self.assertEqual(test_value, ())
+
+    def test_list(self):
+
+        # Test literal
+        test_value = safe_eval("[1, 2, 3]")
+        self.assertEqual(test_value, [1, 2, 3])
+
+        # Test function
+        test_value = safe_eval("list()")
+        self.assertEqual(test_value, [])
+
+    def test_set(self):
+
+        # Test literal
+        test_value = safe_eval("{1, 2, 3}")
+        self.assertEqual(test_value, {1, 2, 3})
+
+        # Test function
+        test_value = safe_eval("set()")
+        self.assertEqual(test_value, set())
+
+    def test_dict(self):
+
+        # Test literal
+        test_value = safe_eval("{1: 2, 'one': 'two'}")
+        self.assertEqual(test_value, {1: 2, 'one': 'two'})
+
+        # Test function
+        test_value = safe_eval("dict()")
+        self.assertEqual(test_value, {})
 
 
 if __name__ == '__main__':
