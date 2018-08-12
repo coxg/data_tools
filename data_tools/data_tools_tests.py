@@ -300,9 +300,34 @@ class ConfigurableFunctionTests(unittest.TestCase):
         sys.argv = ["python_script.py"]
         self.assertEqual(test_func(), 10)
 
+        # Make sure nothing changed
+        sys.argv = ["python_script.py", "--x", "7", "--y", "12"]
+        self.assertEqual(test_func(), 10)
+
     def test_no_inputs(self):
 
-        # Define function
+        # Test no default
+        @configurable
+        def test_func(x):
+            return x
+
+        # Make sure nothing changed
+        sys.argv = ["python_script.py"]
+        self.assertEqual(test_func(1), 1)
+        self.assertEqual(test_func(x=1), 1)
+
+        # Test default
+        @configurable
+        def test_func(y=10):
+            return y
+
+        # Make sure nothing changed
+        sys.argv = ["python_script.py"]
+        self.assertEqual(test_func(), 10)
+        self.assertEqual(test_func(1), 1)
+        self.assertEqual(test_func(y=1), 1)
+
+        # Test both
         @configurable
         def test_func(x, y=10):
             return x, y
@@ -314,20 +339,29 @@ class ConfigurableFunctionTests(unittest.TestCase):
         self.assertEqual(test_func(1, 2), (1, 2))
         self.assertEqual(test_func(x=1, y=2), (1, 2))
 
-        # Make sure arbitrary positional args still work
+        # Test everything
         @configurable
-        def test_func(*args, x, y=10):
-            return args, x, y
+        def test_func(a, b, c=3, d=4, *args, e, f, g=9, h=10, **kwargs):
+            return a, b, c, d, args, e, f, g, h, kwargs
 
         # Make sure nothing changed
-        self.assertEqual(test_func(x=1), ((), 1, 10))
-        self.assertEqual(test_func(1, x=1), ((1,), 1, 10))
-        self.assertEqual(test_func(1, 2, 3, x=1), ((1, 2, 3), 1, 10))
-        self.assertEqual(test_func(x=1, y=2), ((), 1, 2))
-        self.assertEqual(test_func(1, x=1, y=2), ((1,), 1, 2))
-        self.assertEqual(test_func(1, 2, 3, x=1, y=2), ((1, 2, 3), 1, 2))
+        self.assertEqual(test_func(1, 2, e=7, f=8), (1, 2, 3, 4, (), 7, 8, 9, 10, {}))
+        self.assertEqual(
+            test_func(1, 2, -3, -4, 5, 6, e=7, f=8, g=-9, h=-10, i=11, j=12),
+            (1, 2, -3, -4, (5, 6), 7, 8, -9, -10, {'i': 11, 'j': 12}))
 
     def test_with_inputs_positional(self):
+
+        # Test no default
+        @configurable
+        def test_func(x):
+            return x
+
+        # Make sure the variable changed
+        sys.argv = ["python_script.py", "--x", "7", "--y", "12"]
+        self.assertEqual(test_func(), 7)
+        self.assertEqual(test_func(1), 7)
+        self.assertEqual(test_func(x=1), 7)
 
         # Define function
         @configurable
@@ -336,6 +370,7 @@ class ConfigurableFunctionTests(unittest.TestCase):
 
         # Make sure the variable changed
         sys.argv = ["python_script.py", "--x", "12"]
+        self.assertEqual(test_func(), (12, 10))
         self.assertEqual(test_func(1), (12, 10))
         self.assertEqual(test_func(x=1), (12, 10))
         self.assertEqual(test_func(1, 2), (12, 2))
@@ -349,7 +384,18 @@ class ConfigurableFunctionTests(unittest.TestCase):
 
     def test_with_inputs_keyword(self):
 
-        # Define function
+        # Test default
+        @configurable
+        def test_func(y=10):
+            return y
+
+        # Make sure the variable changed
+        sys.argv = ["python_script.py", "--x", "7", "--y", "12"]
+        self.assertEqual(test_func(), 12)
+        self.assertEqual(test_func(1), 12)
+        self.assertEqual(test_func(y=1), 12)
+
+        # Test default after positional
         @configurable
         def test_func(x, y=10):
             return x, y
@@ -363,7 +409,7 @@ class ConfigurableFunctionTests(unittest.TestCase):
 
     def test_with_inputs_mixed(self):
 
-        # Define function
+        # Test positionals with and without defaults
         @configurable
         def test_func(x, y=10):
             return x, y
@@ -376,6 +422,20 @@ class ConfigurableFunctionTests(unittest.TestCase):
         self.assertEqual(test_func(x=1, y=2), (7, 12))
         self.assertEqual(test_func(y=2), (7, 12))
         self.assertEqual(test_func(), (7, 12))
+
+        # Test everything
+        @configurable
+        def test_func(a, b, c=3, d=4, *args, e, f, g=9, h=10, **kwargs):
+            return a, b, c, d, args, e, f, g, h, kwargs
+
+        # Make sure nothing changed
+        sys.argv = ["python_script.py", "--b", "102", "--d", "104", "--f", "108", "--h", "110", "--j", "112"]
+        self.assertEqual(
+            test_func(1, 2, e=7, f=8),
+            (1, 102, 3, 104, (), 7, 108, 9, 110, {}))
+        self.assertEqual(
+            test_func(1, 2, -3, -4, 5, 6, e=7, f=8, g=-9, h=-10, i=11, j=12),
+            (1, 102, -3, 104, (5, 6), 7, 108, -9, 110, {'i': 11, 'j': 112}))
 
 
 class SafeEvalTests(unittest.TestCase):

@@ -1,8 +1,14 @@
 import sys
 from .safe_eval import safe_eval
+import inspect
+import collections
 
 
 class NotConfigured:
+    """
+    Used as a dummy value for parameters which have not been configured yet. This should never be exposed to users of
+    the library.
+    """
     pass
 
 
@@ -52,106 +58,132 @@ def configurable(configurable_function=None, return_type=None, **parameters):
     x = configurable(x="test")
     """
 
-    # If it's handed a function, configure all parameters of the function.
+    #######################################################################
+    # If it's handed a function, configure all parameters of the function #
+    #######################################################################
+
     if configurable_function:
         def _wrapper(*args, **kwargs):
 
-            # Get variables to configure
-            function_parameters = configurable_function.__code__.co_varnames
-            function_parameters_dict = {
-                function_parameter: NotConfigured()
-                for function_parameter in function_parameters}
+            # Get the function spec
+            function_spec = inspect.getfullargspec(configurable_function)
 
-            # Get configuration results from command line
-            function_parameters_dict = configurable(return_type=dict, **function_parameters_dict)
+            # Create dictionaries for positional and keyword arguments
+            function_parameters = {
+                "args": collections.OrderedDict((arg, NotConfigured) for arg in function_spec.args),
+                "*args": [],
+                "kwargs": collections.OrderedDict((kwarg, NotConfigured) for kwarg in function_spec.kwonlyargs)
+            }
 
-            # Loop through each variable, assigning the value if not configured
-            min_arg_index_used = len(args)
-            for index, function_parameter in enumerate(function_parameters):
-                if isinstance(function_parameters_dict[function_parameter], NotConfigured):
+            # Update positional arguments with default values of the parameters
+            if function_spec.defaults:
+                values_to_assign = function_spec.defaults[:len(function_parameters["args"])]
+                for index, positional_argument in enumerate(reversed(values_to_assign)):
+                    variable_to_assign = list(function_parameters["args"].keys())[-index - 1]
+                    function_parameters["args"][variable_to_assign] = positional_argument
 
-                    # If the value is provided in the function call then use that
-                    if function_parameter in kwargs:
-                        function_parameters_dict[function_parameter] = kwargs[function_parameter]
+            # Update positional arguments with passed in values of the parameters
+            values_to_assign = args[:len(function_parameters["args"])]
+            for index, positional_argument in enumerate(values_to_assign):
+                variable_to_assign = list(function_parameters["args"].keys())[index]
+                function_parameters["args"][variable_to_assign] = positional_argument
 
-                    # Else, if it was provided as a positional argument then use that
-                    elif index < len(args):
-                        function_parameters_dict[function_parameter] = args[index]
+            # Grab arbitrary positional arguments
+            function_parameters["*args"] = args[len(function_parameters["args"]):]
 
-                # Make sure the variable is only supplied once
-                if isinstance(function_parameters_dict[function_parameter], NotConfigured):
-                    del function_parameters_dict[function_parameter]
-                elif function_parameter in kwargs:
-                    del kwargs[function_parameter]
-                if function_parameter in function_parameters_dict:
-                    if index < len(args):
-                        if index < min_arg_index_used:
-                            min_arg_index_used = index
+            # Update keyword arguments with default values of the parameters
+            if function_spec.kwonlydefaults:
+                function_parameters["kwargs"].update(function_spec.kwonlydefaults)
 
-            # Return the result of the function with the configured parameters
-            result = configurable_function(*args[:min_arg_index_used], **function_parameters_dict, **kwargs)
+            # Update keyword arguments with passed in values of the parameters
+            for keyword_parameter, keyword_value in kwargs.items():
+                if keyword_parameter in function_parameters["args"]:
+                    function_parameters["args"][keyword_parameter] = keyword_value
+                else:
+                    function_parameters["kwargs"][keyword_parameter] = keyword_value
+
+            # Update with command line values of the parameters
+            all_parameters = list(function_parameters["args"].keys()) + list(function_parameters["kwargs"].keys())
+            all_parameters = {any_parameter: NotConfigured() for any_parameter in all_parameters}
+            all_parameters = configurable(return_type=dict, **all_parameters)
+            configured_parameters = {
+                configured_parameter: configured_value
+                for configured_parameter, configured_value in all_parameters.items()
+                if not isinstance(configured_value, NotConfigured)}
+            for keyword_parameter, keyword_value in configured_parameters.items():
+                if keyword_parameter in function_parameters["args"]:
+                    function_parameters["args"][keyword_parameter] = keyword_value
+                else:
+                    function_parameters["kwargs"][keyword_parameter] = keyword_value
+
+            # Return the result of the function with all parameters
+            result = configurable_function(
+                *function_parameters["args"].values(),
+                *function_parameters["*args"],
+                **function_parameters["kwargs"])
             return result
         return _wrapper
 
-    # If there's no function then we're configuring a variable or set of variables manually
-    else:
+    #########################################################################################
+    # If there's no function then we're configuring a variable or set of variables manually #
+    #########################################################################################
 
-        # The values to return
-        values = []
+    # The values to return
+    values = []
 
-        # Make command line parameters more easily searchable
-        command_line_parameters_dict = {value: index for index, value in enumerate(sys.argv)}
+    # Make command line parameters more easily searchable
+    command_line_parameters_dict = {value: index for index, value in enumerate(sys.argv)}
 
-        # Loop through each key word argument, seeing if it was given as a command line parameter
-        for parameter, default in parameters.items():
+    # Loop through each key word argument, seeing if it was given as a command line parameter
+    for parameter, default in parameters.items():
 
-            # Check to see if any valid form of the parameter is given
-            parameter_value = default
-            parameter_index = command_line_parameters_dict.get("--" + parameter)  # Long form
-            if parameter_index is None:
-                parameter_index = command_line_parameters_dict.get(
-                    "-" + "".join([word[0] for word in parameter.split("_")]))  # Short form
+        # Check to see if any valid form of the parameter is given
+        parameter_value = default
+        parameter_index = command_line_parameters_dict.get("--" + parameter)  # Long form
+        if parameter_index is None:
+            parameter_index = command_line_parameters_dict.get(
+                "-" + "".join([word[0] for word in parameter.split("_")]))  # Short form
 
-            # If the parameter is present then return the value specified via command line
-            if parameter_index is not None:
+        # If the parameter is present then return the value specified via command line
+        if parameter_index is not None:
 
-                # If it's the last input then no value was specified, so assume it's a flag
-                if len(command_line_parameters_dict) <= parameter_index + 1:
+            # If it's the last input then no value was specified, so assume it's a flag
+            if len(command_line_parameters_dict) <= parameter_index + 1:
+                parameter_value = True
+
+            # Else, get the value specified
+            else:
+                parameter_value = sys.argv[parameter_index + 1]
+
+                # If this value is also a parameter then no value was specified, so assume it's a flag
+                if len(parameter_value) >= 2 and parameter_value[0] == "-" and not parameter_value[1].isdigit():
                     parameter_value = True
 
-                # Else, get the value specified
+                # Else, interpret in the value
                 else:
-                    parameter_value = sys.argv[parameter_index + 1]
+                    parameter_value = safe_eval(parameter_value)
 
-                    # If this value is also a parameter then no value was specified, so assume it's a flag
-                    if len(parameter_value) >= 2 and parameter_value[0] == "-" and not parameter_value[1].isdigit():
-                        parameter_value = True
+        # Append the value to our list of values
+        values.append(parameter_value)
 
-                    # Else, interpret in the value
-                    else:
-                        parameter_value = safe_eval(parameter_value)
+    # After finding all values, fit them to the specified return type
 
-            # Append the value to our list of values
-            values.append(parameter_value)
-
-        # After finding all values, fit them to the specified return type
-
-        # If return type is None (the default) then return just the value if one parameter is specified
-        if return_type is None:
-            if not values:
-                return None
-            elif len(values) == 1:
-                return values[0]
-            else:
-                return values
-
-        # If the return type is dict then return a mapping from variable to value
-        elif return_type == dict:
-            return {
-                parameter_name: values[parameter_index]
-                for parameter_index, parameter_name in enumerate(parameters.keys())
-            }
-
-        # Else, just try to convert the values to the type
+    # If return type is None (the default) then return just the value if one parameter is specified
+    if return_type is None:
+        if not values:
+            return None
+        elif len(values) == 1:
+            return values[0]
         else:
-            return return_type(values)
+            return values
+
+    # If the return type is dict then return a mapping from variable to value
+    elif return_type == dict:
+        return {
+            parameter_name: values[parameter_index]
+            for parameter_index, parameter_name in enumerate(parameters.keys())
+        }
+
+    # Else, just try to convert the values to the type
+    else:
+        return return_type(values)
